@@ -507,8 +507,11 @@ def build(week):
             for i, s in enumerate(slides, 1):
                 img = templates.render(sys.modules[__name__], s, plat, i, tot, pidx, p["theme"]) if USE_TPL else None
                 if img is None: img = render_slide(s, p["theme"], plat, i, tot)
-                img.save(os.path.join(pdir, f"slide_{i}.png"), optimize=True)
+                if USE_TPL: img.convert("RGB").save(os.path.join(pdir, f"slide_{i}.jpg"), quality=90, optimize=True)
+                else: img.save(os.path.join(pdir, f"slide_{i}.png"), optimize=True)
         cap.append(f"\n## {p['id']} \u00b7 {p['day']} \u00b7 {p['slot']} \u00b7 {p['fmt']}\n")
+        ttl = next((s["title"] for s in p["slides"] if s["k"] == "cover"), p["name"])
+        cap.append(f"**T\u00cdTULO:** {ttl}\n")
         cap.append(f"**Carpeta:** {folder}\n")
         cap.append(f"**INSTAGRAM caption:**\n{p['ig']}\n\n{mod.IGB} {p['igx']}\n")
         cap.append(f"**TIKTOK caption:**\n{p['tt']} {mod.TTB} {p['ttx']}\n")
