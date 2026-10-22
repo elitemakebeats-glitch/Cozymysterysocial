@@ -25,6 +25,8 @@ jobs:
           done
           curl -fsSL -o fonts/Lora-Variable.ttf "$base/lora/Lora%5Bwght%5D.ttf"
       - name: Generate slides
+        env:
+          GOOGLE_BOOKS_API_KEY: ${{ secrets.GOOGLE_BOOKS_API_KEY }}
         run: python generate.py "${{ github.event.inputs.week }}"
       - uses: actions/upload-artifact@v4
         with:
