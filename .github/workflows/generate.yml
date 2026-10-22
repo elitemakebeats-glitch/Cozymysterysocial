@@ -1,0 +1,32 @@
+name: Generate slides
+on:
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "Nombre del archivo de la semana, sin .py"
+        default: "week1"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install fonts and libraries
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y fonts-noto-color-emoji
+          pip install pillow requests
+          mkdir -p fonts
+          base=https://github.com/google/fonts/raw/main/ofl
+          for f in Regular Medium Bold Italic; do
+            curl -fsSL -o fonts/Poppins-$f.ttf $base/poppins/Poppins-$f.ttf
+          done
+          curl -fsSL -o fonts/Lora-Variable.ttf "$base/lora/Lora%5Bwght%5D.ttf"
+      - name: Generate slides
+        run: python generate.py "${{ github.event.inputs.week }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cozy-slides
+          path: out
