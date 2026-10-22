@@ -7,6 +7,8 @@ on:
       week:
         description: "Semana (ej: week1). Deja auto para elegir por fecha"
         default: "auto"
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,6 +32,7 @@ jobs:
         id: wk
         run: |
           w="${{ github.event.inputs.week }}"
+          w=$(echo "$w" | tr 'A-Z' 'a-z')
           if [ -z "$w" ] || [ "$w" = "auto" ]; then
             nextmon=$(date -u -d "next monday" +%s)
             start=$(date -u -d "2026-10-26" +%s)
@@ -41,6 +44,18 @@ jobs:
         env:
           GOOGLE_BOOKS_API_KEY: ${{ secrets.GOOGLE_BOOKS_API_KEY }}
         run: python generate.py "${{ steps.wk.outputs.week }}"
+      - name: Guardar en weeks y borrar antiguas
+        run: |
+          w="${{ steps.wk.outputs.week }}"
+          mkdir -p weeks
+          rm -rf "weeks/$w"
+          cp -r out "weeks/$w"
+          ls -d weeks/week* | sed -E 's#weeks/week##' | sort -n | head -n -2 | while read n; do rm -rf "weeks/week$n"; done
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A weeks
+          git commit -m "Slides $w" || echo "sin cambios"
+          git push
       - uses: actions/upload-artifact@v4
         with:
           name: cozy-slides-${{ steps.wk.outputs.week }}
