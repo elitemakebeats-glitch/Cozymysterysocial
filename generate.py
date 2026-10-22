@@ -2,7 +2,7 @@
 
 Uso:  python generate.py week1
 Lee week1.py (posts, captions, autores), descarga las portadas desde
-Google Books y Open Library, y crea las slides en out/instagram y out/tiktok.
+Google Books, Open Library, Apple Books y Amazon (por ISBN), y crea las slides en out/instagram y out/tiktok.
 
 Portadas manuales: pon la imagen en covers_manual/ con el nombre que aparece
 en out/covers_report.md (ejemplo: haunted_homicide.jpg). Siempre tiene prioridad.
@@ -90,6 +90,11 @@ def _fetch_img(url):
     return im
 
 def _google(title, author):
+    img = _google_q(title, author)
+    if img is None and author: img = _google_q(title, "")
+    return img
+
+def _google_q(title, author):
     q = f'intitle:"{title}"' + (f' inauthor:"{author}"' if author else "")
     params = {"q": q, "maxResults": 10, "printType": "books"}
     key = os.environ.get("GOOGLE_BOOKS_API_KEY")
@@ -128,6 +133,50 @@ def _openlibrary(title, author):
                 except Exception: continue
     return None
 
+def _itunes(title, author, country="us"):
+    """Apple Books (iTunes Search API): gratis, sin clave, buena cobertura de novedades."""
+    nt = norm(title)
+    for term in ([f"{title} {author}", title] if author else [title]):
+        r = requests.get("https://itunes.apple.com/search",
+                         params={"term": term, "media": "ebook", "entity": "ebook",
+                                 "country": country, "limit": 10}, headers=UA, timeout=30)
+        r.raise_for_status()
+        for d in r.json().get("results", []):
+            vt = norm(d.get("trackName", ""))
+            url = d.get("artworkUrl100") or d.get("artworkUrl60")
+            if not url or not vt or not (nt in vt or vt in nt): continue
+            url = re.sub(r"/\d+x\d+(bb)?\.", "/800x800bb.", url)
+            try: return _fetch_img(url)
+            except Exception: continue
+    return None
+
+def _itunes_gb(title, author): return _itunes(title, author, "gb")
+
+def _isbn13_to_10(i):
+    if len(i) != 13 or not i.startswith("978"): return None
+    core = i[3:12]
+    t = sum((10 - k) * int(c) for k, c in enumerate(core)) % 11
+    t = (11 - t) % 11
+    return core + ("X" if t == 10 else str(t))
+
+def _amazon(title, author):
+    """Portada de Amazon por ISBN (el ISBN se saca de Open Library)."""
+    nt = norm(title)
+    params = {"title": title, "limit": 10, "fields": "title,isbn"}
+    if author: params["author"] = author
+    r = requests.get("https://openlibrary.org/search.json", params=params, headers=UA, timeout=30)
+    r.raise_for_status()
+    for d in r.json().get("docs", []):
+        vt = norm(d.get("title", ""))
+        if not (nt in vt or vt in nt): continue
+        for isbn in (d.get("isbn") or [])[:12]:
+            i10 = isbn if len(isbn) == 10 else _isbn13_to_10(isbn)
+            if not i10: continue
+            for host in ("https://images-na.ssl-images-amazon.com", "https://m.media-amazon.com"):
+                try: return _fetch_img(f"{host}/images/P/{i10}.01.L.jpg")
+                except Exception: continue
+    return None
+
 def get_cover(title, author=""):
     s = slug(title)
     if s in _cover_cache: return _cover_cache[s]
@@ -140,7 +189,8 @@ def get_cover(title, author=""):
         img, src = Image.open(f"covers_cache/{s}.jpg").convert("RGB"), "cache"
     if img is None and requests is not None:
         author = AUTHORS.get(norm(title), author or "")
-        for name, fn in (("Google Books", _google), ("Open Library", _openlibrary)):
+        for name, fn in (("Google Books", _google), ("Open Library", _openlibrary),
+                         ("Apple Books", _itunes), ("Apple Books GB", _itunes_gb), ("Amazon", _amazon)):
             try:
                 img = fn(title, author)
             except Exception as e:
@@ -390,73 +440,4 @@ def render_slide(sl, theme, plat, idx, total):
         items += [it_text(d, "Answers on the last slide", pop(32, "Regular"), acc, mw)]
         render_block(d, im, items, area, W, card=card)
     elif kind == "answers":
-        rows = [(it.get("cover"), f"#{n}", it["title"], it.get("sub", "")) for n, it in enumerate(sl["items"], 1)]
-        render_rows(d, im, rows, area, W, ink, acc, bg, head="THE ANSWERS")
-    elif kind == "dates":
-        rows = [(it.get("cover"), it["date"], it["title"], it.get("sub", "")) for it in sl["items"]]
-        render_rows(d, im, rows, area, W, ink, acc, bg, head=sl["head"])
-    elif kind == "cta":
-        items = [it_emoji(d, sl["emo"], 150, mw, ink), it_space(50)]
-        f, ls, s = fit(d, sl["text"], lambda z: lora(z, "Bold"), mw, 5, 92, 56)
-        items += [it_lines(ls, f, ink, int(s * 1.2)), it_space(44), it_bar(200, 10, acc), it_space(44)]
-        items += [it_text(d, "Comment \u00b7 Save \u00b7 Share", pop(38, "Medium"), acc, mw), it_space(30)]
-        items += [it_chip(d, "FOLLOW " + HANDLE, pop(30, "Bold"), acc, bg)]
-        render_block(d, im, items, area, W)
-    return im
-
-# ---------------------------------------------------------------- main
-def load_week(name):
-    spec = importlib.util.spec_from_file_location(name, f"{name}.py")
-    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-    return mod
-
-def attach_covers(slides):
-    for s in slides:
-        if s["k"] == "book":
-            s["cover"] = get_cover(s["title"], s.get("author", ""))
-        elif s["k"] in ("answers", "dates"):
-            for it in s["items"]:
-                it["cover"] = get_cover(it["title"])
-
-def build(week):
-    global AUTHORS
-    mod = load_week(week)
-    AUTHORS = {norm(k): v for k, v in getattr(mod, "AUTHORS", {}).items()}
-    if os.path.exists(OUT): shutil.rmtree(OUT)
-    os.makedirs(OUT)
-    cap = [f"# Cozy Mystery Corner \u00b7 {week} \u00b7 Captions y hashtags\n"]
-    for p in mod.POSTS:
-        print("Post", p["id"], p["name"])
-        n = 0; slides = []
-        for s in p["slides"]:
-            s = dict(s)
-            if "items" in s: s["items"] = [dict(i) for i in s["items"]]
-            if s["k"] == "book": n += 1; s["n"] = n
-            slides.append(s)
-        attach_covers(slides)
-        tot = len(slides)
-        wd = p["day"].split()
-        folder = f"{p['id']}_{wd[0].lower()}{wd[1]}_{p['slot'].replace(':', '').replace(' ', '')}_{p['name']}"
-        for plat in ("ig", "tt"):
-            pdir = os.path.join(OUT, "instagram" if plat == "ig" else "tiktok", folder)
-            os.makedirs(pdir)
-            for i, s in enumerate(slides, 1):
-                render_slide(s, p["theme"], plat, i, tot).save(os.path.join(pdir, f"slide_{i}.png"), optimize=True)
-        cap.append(f"\n## {p['id']} \u00b7 {p['day']} \u00b7 {p['slot']} \u00b7 {p['fmt']}\n")
-        cap.append(f"**Carpeta:** {folder}\n")
-        cap.append(f"**INSTAGRAM caption:**\n{p['ig']}\n\n{mod.IGB} {p['igx']}\n")
-        cap.append(f"**TIKTOK caption:**\n{p['tt']} {mod.TTB} {p['ttx']}\n")
-    open(os.path.join(OUT, f"captions_{week}.md"), "w", encoding="utf-8").write("\n".join(cap))
-    found = [v for v in REPORT.values() if v[1] != "NO ENCONTRADA"]
-    miss = [(s, v[0]) for s, v in REPORT.items() if v[1] == "NO ENCONTRADA"]
-    rep = ["# Informe de portadas\n", f"Encontradas: {len(found)} \u00b7 Faltan: {len(miss)}\n"]
-    if miss:
-        rep.append("\n## Faltan (sube la imagen a covers_manual/ con este nombre y vuelve a ejecutar)\n")
-        rep += [f"- {t}  ->  covers_manual/{s}.jpg" for s, t in miss]
-    rep.append("\n## Encontradas\n")
-    rep += [f"- {t} ({src})" for t, src in sorted(found)]
-    open(os.path.join(OUT, "covers_report.md"), "w", encoding="utf-8").write("\n".join(rep))
-    print("Portadas encontradas:", len(found), "| faltan:", len(miss))
-
-if __name__ == "__main__":
-    build(sys.argv[1] if len(sys.argv) > 1 else "week1")
+        rows 
