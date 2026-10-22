@@ -8,6 +8,11 @@ Portadas manuales: pon la imagen en covers_manual/ con el nombre que aparece
 en out/covers_report.md (ejemplo: haunted_homicide.jpg). Siempre tiene prioridad.
 """
 import os, sys, re, io, math, time, glob, shutil, importlib.util
+try:
+    import templates
+except ImportError:
+    templates = None
+USE_TPL = templates is not None and os.path.isdir("templates") and os.environ.get("NO_TEMPLATES") != "1"
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 try:
     import requests
@@ -476,7 +481,7 @@ def build(week):
     if os.path.exists(OUT): shutil.rmtree(OUT)
     os.makedirs(OUT)
     cap = [f"# Cozy Mystery Corner \u00b7 {week} \u00b7 Captions y hashtags\n"]
-    for p in mod.POSTS:
+    for pidx, p in enumerate(mod.POSTS):
         print("Post", p["id"], p["name"])
         n = 0; slides = []
         for s in p["slides"]:
@@ -500,7 +505,9 @@ def build(week):
             pdir = os.path.join(OUT, "instagram" if plat == "ig" else "tiktok", folder)
             os.makedirs(pdir)
             for i, s in enumerate(slides, 1):
-                render_slide(s, p["theme"], plat, i, tot).save(os.path.join(pdir, f"slide_{i}.png"), optimize=True)
+                img = templates.render(sys.modules[__name__], s, plat, i, tot, pidx, p["theme"]) if USE_TPL else None
+                if img is None: img = render_slide(s, p["theme"], plat, i, tot)
+                img.save(os.path.join(pdir, f"slide_{i}.png"), optimize=True)
         cap.append(f"\n## {p['id']} \u00b7 {p['day']} \u00b7 {p['slot']} \u00b7 {p['fmt']}\n")
         cap.append(f"**Carpeta:** {folder}\n")
         cap.append(f"**INSTAGRAM caption:**\n{p['ig']}\n\n{mod.IGB} {p['igx']}\n")
